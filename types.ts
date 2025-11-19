@@ -15,17 +15,28 @@ export interface CountryGeoJson {
   features: CountryGeoJsonFeature[];
 }
 
+export interface HistoricalPoint {
+  year: number;
+  value: number;
+}
+
 export interface EconomicStats {
   population: number;
   gdpPerCapita: number;
   popGrowth: number; // Percentage
   gdpGrowth: number; // Percentage
+  populationRank?: number;
+  gdpRank?: number;
+  history: {
+    population: HistoricalPoint[];
+    gdp: HistoricalPoint[];
+  };
 }
-
-export type VisualizationMode = 'POPULATION' | 'GDP_PER_CAPITA' | 'POP_GROWTH' | 'GDP_GROWTH';
 
 export interface AIInsight {
   summary: string;
   keyFactors: string[];
-  outlook: 'Positive' | 'Neutral' | 'Negative';
+  outlook: string;
 }
+
+export type VisualizationMode = 'POPULATION' | 'GDP_PER_CAPITA' | 'POP_GROWTH' | 'GDP_GROWTH';

@@ -1,8 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { X, Cpu, Activity, Users, TrendingUp, Globe } from 'lucide-react';
-import { EconomicStats, AIInsight } from '../types';
+import React from 'react';
+import { X, Globe, TrendingUp } from 'lucide-react';
+import { EconomicStats, HistoricalPoint } from '../types';
 import { StatsCard } from './StatsCard';
-import { generateCountryInsight } from '../services/geminiService';
 
 interface InfoPanelProps {
   countryName: string;
@@ -10,50 +9,66 @@ interface InfoPanelProps {
   onClose: () => void;
 }
 
-export const InfoPanel: React.FC<InfoPanelProps> = ({ countryName, stats, onClose }) => {
-  const [insight, setInsight] = useState<AIInsight | null>(null);
-  const [loading, setLoading] = useState(true);
+// Simple SVG Line Chart Component
+const TrendChart: React.FC<{ 
+  data: HistoricalPoint[]; 
+  color: string; 
+  label: string; 
+  isCurrency?: boolean;
+}> = ({ data, color, label, isCurrency = false }) => {
+  const height = 50; // Reduced height for compact view
+  const width = 140;
+  const padding = 4;
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchInsight = async () => {
-      setLoading(true);
-      setInsight(null);
+  const minVal = Math.min(...data.map(d => d.value));
+  const maxVal = Math.max(...data.map(d => d.value));
+  const range = maxVal - minVal || 1;
+
+  const points = data.map((d, i) => {
+    const x = (i / (data.length - 1)) * width;
+    const y = height - ((d.value - minVal) / range) * (height - padding * 2) - padding;
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <div className="bg-slate-900/40 border border-slate-800/50 rounded-lg p-3 flex flex-col h-full group hover:bg-slate-900/60 transition-colors">
+      <div className="flex justify-between items-center mb-2">
+        <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider truncate">{label}</span>
+      </div>
       
-      try {
-        // Artificial delay for UI "scanning" effect if Gemini is too fast, 
-        // or to show the loading animation properly.
-        const results = await Promise.all([
-          generateCountryInsight(countryName, stats),
-          new Promise(resolve => setTimeout(resolve, 1200))
-        ]);
-        
-        const aiResult = results[0] as AIInsight;
+      <div className="relative flex-1 w-full min-h-[50px]">
+        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="overflow-visible">
+          <path 
+            d={`M ${points}`} 
+            fill="none" 
+            stroke="currentColor" 
+            strokeWidth="2" 
+            className={`${color} opacity-80`}
+            vectorEffect="non-scaling-stroke"
+          />
+          {data.map((d, i) => {
+             const x = (i / (data.length - 1)) * width;
+             const y = height - ((d.value - minVal) / range) * (height - padding * 2) - padding;
+             return (
+               <circle cx={x} cy={y} r="2" className={`fill-white opacity-0 group-hover:opacity-100 transition-opacity duration-300`} key={i} />
+             )
+          })}
+        </svg>
+      </div>
+      
+      <div className="flex justify-between mt-1 text-[9px] font-mono text-slate-600">
+        <span>{data[0].year}</span>
+        <span>{data[data.length-1].year}</span>
+      </div>
+    </div>
+  );
+};
 
-        if (isMounted) {
-          setInsight(aiResult);
-          setLoading(false);
-        }
-      } catch (e) {
-        console.error("Failed to fetch insight", e);
-        if (isMounted) {
-          setInsight({
-            summary: "Data unavailable.",
-            keyFactors: ["Connection Error"],
-            outlook: "Neutral"
-          });
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchInsight();
-    return () => { isMounted = false; };
-  }, [countryName, stats]);
+export const InfoPanel: React.FC<InfoPanelProps> = ({ countryName, stats, onClose }) => {
 
   const formatNumber = (num: number) => {
     if (num >= 1000000000) return (num / 1000000000).toFixed(2) + 'B';
-    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
     return num.toLocaleString();
   };
 
@@ -62,102 +77,78 @@ export const InfoPanel: React.FC<InfoPanelProps> = ({ countryName, stats, onClos
   };
 
   return (
-    <div className="absolute top-0 right-0 h-full w-full md:w-[480px] bg-slate-950/80 backdrop-blur-xl border-l border-slate-800 shadow-2xl z-20 flex flex-col transition-transform duration-300 ease-out animate-in slide-in-from-right">
-      {/* Header */}
-      <div className="p-6 border-b border-slate-800 flex justify-between items-start bg-gradient-to-b from-slate-900/50 to-transparent">
+    <div className="absolute top-0 right-0 h-full w-full md:w-[420px] bg-slate-950/95 backdrop-blur-2xl border-l border-slate-800 shadow-2xl z-20 flex flex-col transition-transform duration-300 ease-out animate-in slide-in-from-right">
+      
+      {/* Header - More compact */}
+      <div className="p-5 pb-4 border-b border-slate-800 flex justify-between items-start bg-gradient-to-b from-slate-900 to-transparent">
         <div>
-          <div className="flex items-center gap-2 text-cyan-400 mb-2">
-            <Globe className="w-4 h-4 animate-pulse" />
-            <span className="text-xs font-mono tracking-widest uppercase">Entity Analysis</span>
+          <div className="flex items-center gap-2 text-cyan-400 mb-1">
+            <Globe className="w-3 h-3 animate-pulse" />
+            <span className="text-[10px] font-mono tracking-widest uppercase">Country Insight</span>
           </div>
-          <h2 className="text-4xl font-display font-bold text-white tracking-tight">{countryName}</h2>
+          <h2 className="text-3xl font-display font-bold text-white tracking-tight leading-none">{countryName}</h2>
         </div>
         <button 
           onClick={onClose}
-          className="p-2 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"
+          className="p-1.5 hover:bg-slate-800 rounded-full text-slate-400 hover:text-white transition-colors"
         >
-          <X className="w-6 h-6" />
+          <X className="w-5 h-5" />
         </button>
       </div>
 
-      {/* Scrollable Content */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-8">
+      {/* Single Page Content - Compact Grid */}
+      <div className="flex-1 p-5 space-y-4 overflow-hidden flex flex-col">
         
-        {/* Primary Stats Grid */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* 1. Key Stats Cards with Ranking */}
+        <div className="grid grid-cols-2 gap-3">
           <StatsCard 
-            label="Total Population" 
+            label="Population" 
             value={formatNumber(stats.population)} 
             trend={stats.popGrowth}
+            rank={stats.populationRank}
             delay={100}
           />
           <StatsCard 
             label="GDP Per Capita" 
             value={formatCurrency(stats.gdpPerCapita)} 
             trend={stats.gdpGrowth}
+            rank={stats.gdpRank}
             delay={200}
           />
         </div>
 
-        {/* AI Analysis Section */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 text-fuchsia-400 border-b border-slate-800 pb-2">
-            <Cpu className="w-5 h-5" />
-            <h3 className="font-display font-semibold uppercase tracking-wider text-sm">Gemini Intelligence</h3>
+        {/* 2. Historical Trends Section - Side by Side */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="h-px bg-slate-800 flex-1"></div>
+            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">10-Year Trends</span>
+            <div className="h-px bg-slate-800 flex-1"></div>
           </div>
 
-          {loading ? (
-            <div className="space-y-4 py-4">
-              <div className="flex items-center gap-3 text-cyan-500/80">
-                <div className="w-2 h-2 bg-cyan-500 rounded-full animate-ping" />
-                <span className="font-mono text-xs">ANALYZING MACROECONOMIC DATA STREAMS...</span>
-              </div>
-              <div className="h-4 bg-slate-800/50 rounded animate-pulse w-full" />
-              <div className="h-4 bg-slate-800/50 rounded animate-pulse w-3/4" />
-              <div className="h-4 bg-slate-800/50 rounded animate-pulse w-5/6" />
-            </div>
-          ) : (
-            <div className="space-y-6 animate-in fade-in duration-700">
-              
-              {/* Outlook Badge */}
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Projected Outlook</span>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${
-                  insight?.outlook === 'Positive' ? 'bg-emerald-950/50 border-emerald-500/30 text-emerald-400' :
-                  insight?.outlook === 'Negative' ? 'bg-rose-950/50 border-rose-500/30 text-rose-400' :
-                  'bg-slate-800 border-slate-600 text-slate-300'
-                }`}>
-                  {insight?.outlook}
-                </span>
-              </div>
+          <div className="grid grid-cols-2 gap-3 h-32">
+             <TrendChart 
+                 data={stats.history.population} 
+                 label="Pop. Curve" 
+                 color="text-fuchsia-400" 
+             />
+             <TrendChart 
+                 data={stats.history.gdp} 
+                 label="Wealth Curve" 
+                 color="text-emerald-400" 
+                 isCurrency={true}
+             />
+          </div>
 
-              {/* Summary */}
-              <p className="text-slate-300 leading-relaxed text-sm border-l-2 border-fuchsia-500/50 pl-4">
-                {insight?.summary}
-              </p>
-
-              {/* Key Factors */}
-              <div className="space-y-3">
-                <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Key Drivers</h4>
-                <ul className="space-y-2">
-                  {insight?.keyFactors && insight.keyFactors.map((factor, idx) => (
-                    <li key={idx} className="flex items-start gap-3 text-sm text-slate-300 group">
-                      <div className="w-1.5 h-1.5 mt-1.5 rounded-full bg-cyan-500 group-hover:scale-150 transition-transform" />
-                      {factor}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Additional Decoration */}
-        <div className="p-4 rounded-lg bg-slate-900/30 border border-dashed border-slate-800">
-          <div className="flex items-center gap-4 text-slate-500 text-xs font-mono">
-            <Activity className="w-4 h-4" />
-            <span>REAL-TIME DATA SYNC ACTIVE</span>
-            <span className="ml-auto opacity-50">V 2.4.0</span>
+          {/* 3. Decorative / Footer Area (Takes remaining space visually) */}
+          <div className="mt-4 flex-1 rounded-xl bg-slate-900/20 border border-dashed border-slate-800 p-4 flex items-center justify-center flex-col text-center gap-2">
+             <p className="text-slate-500 text-xs font-display max-w-[200px]">
+               Global ranking and historical data analysis based on current economic models.
+             </p>
+             <div className="flex gap-1 mt-2">
+               <div className="w-1 h-1 bg-cyan-500 rounded-full animate-ping"></div>
+               <div className="w-1 h-1 bg-cyan-500 rounded-full animate-ping delay-75"></div>
+               <div className="w-1 h-1 bg-cyan-500 rounded-full animate-ping delay-150"></div>
+             </div>
           </div>
         </div>
 

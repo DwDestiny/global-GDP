@@ -1,18 +1,18 @@
-import React, { useEffect, useRef, useState, useMemo, ErrorInfo } from 'react';
+import React, { Component, ErrorInfo, useEffect, useMemo, useRef, useState } from 'react';
 import Globe, { GlobeMethods } from 'react-globe.gl';
-import { CountryGeoJson, EconomicStats, VisualizationMode } from '../types';
-import { AlertTriangle, Globe as GlobeIcon } from 'lucide-react';
+import { EconomicStats, VisualizationMode } from '../types';
+import { AlertTriangle } from 'lucide-react';
 
 interface Globe3DProps {
   data: Record<string, EconomicStats>;
   mode: VisualizationMode;
   onCountryClick: (name: string, stats: EconomicStats) => void;
   polygonsData: any[];
+  selectedCountryName: string | null;
 }
 
 // --- Utilities ---
 
-// Check WebGL support
 const isWebGLAvailable = () => {
   try {
     const canvas = document.createElement('canvas');
@@ -22,7 +22,6 @@ const isWebGLAvailable = () => {
   }
 };
 
-// Simple Color Interpolation to replace D3 and avoid "s is not a function" errors
 const hexToRgb = (hex: string) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result ? {
@@ -32,18 +31,38 @@ const hexToRgb = (hex: string) => {
   } : { r: 0, g: 0, b: 0 };
 };
 
-const interpolateColor = (color1: string, color2: string, factor: number) => {
-  if (factor < 0) factor = 0;
-  if (factor > 1) factor = 1;
+// Multi-stop gradient interpolation
+const getGradientColor = (value: number, stops: { pos: number, color: string }[]) => {
+  // Ensure stops are sorted
+  const sortedStops = [...stops].sort((a, b) => a.pos - b.pos);
   
-  const c1 = hexToRgb(color1);
-  const c2 = hexToRgb(color2);
+  if (value <= sortedStops[0].pos) return sortedStops[0].color;
+  if (value >= sortedStops[sortedStops.length - 1].pos) return sortedStops[sortedStops.length - 1].color;
 
-  const r = Math.round(c1.r + factor * (c2.r - c1.r));
-  const g = Math.round(c1.g + factor * (c2.g - c1.g));
-  const b = Math.round(c1.b + factor * (c2.b - c1.b));
+  // Find the two stops bounding the value
+  let startStop = sortedStops[0];
+  let endStop = sortedStops[1];
 
-  return `rgba(${r},${g},${b},0.9)`;
+  for (let i = 0; i < sortedStops.length - 1; i++) {
+    if (value >= sortedStops[i].pos && value <= sortedStops[i + 1].pos) {
+      startStop = sortedStops[i];
+      endStop = sortedStops[i + 1];
+      break;
+    }
+  }
+
+  // Interpolate
+  const range = endStop.pos - startStop.pos;
+  const relativeValue = (value - startStop.pos) / range;
+  
+  const c1 = hexToRgb(startStop.color);
+  const c2 = hexToRgb(endStop.color);
+
+  const r = Math.round(c1.r + relativeValue * (c2.r - c1.r));
+  const g = Math.round(c1.g + relativeValue * (c2.g - c1.g));
+  const b = Math.round(c1.b + relativeValue * (c2.b - c1.b));
+
+  return `rgba(${r},${g},${b},0.95)`;
 };
 
 // --- Components ---
@@ -57,9 +76,11 @@ interface ErrorBoundaryState {
   hasError: boolean;
 }
 
-// Error Boundary to catch WebGL Context Failures in react-globe.gl
-class GlobeErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { hasError: false };
+class GlobeErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
 
   static getDerivedStateFromError(error: any) {
     return { hasError: true };
@@ -87,25 +108,18 @@ const FallbackView: React.FC<{ data: any, mode: any, onCountryClick: any }> = ({
           <p className="text-sm text-slate-400">Your device graphics settings are preventing the 3D globe from loading. Switching to list view.</p>
         </div>
       </div>
-      
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {Object.entries(data).map(([name, stats]) => {
           const s = stats as EconomicStats;
           return (
-            <button
-              key={name}
-              onClick={() => onCountryClick(name, s)}
-              className="flex flex-col p-4 bg-slate-900/50 border border-slate-800 rounded-lg hover:border-cyan-500/50 hover:bg-slate-800 transition-all text-left group"
-            >
+            <button key={name} onClick={() => onCountryClick(name, s)} className="flex flex-col p-4 bg-slate-900/50 border border-slate-800 rounded-lg hover:border-cyan-500/50 text-left group">
               <span className="text-cyan-400 text-sm font-mono uppercase mb-1 truncate w-full">{name}</span>
               <div className="flex justify-between items-end w-full">
-                <span className="text-2xl font-display font-bold text-white group-hover:text-cyan-100">
+                <span className="text-2xl font-display font-bold text-white">
                     {mode === 'POPULATION' ? (s.population / 1000000).toFixed(1) + 'M' :
                     mode === 'GDP_PER_CAPITA' ? '$' + s.gdpPerCapita.toLocaleString() :
-                    mode === 'POP_GROWTH' ? s.popGrowth.toFixed(1) + '%' :
                     s.gdpGrowth.toFixed(1) + '%'}
                 </span>
-                <span className="text-xs text-slate-500">{mode.replace(/_/g, ' ')}</span>
               </div>
             </button>
           );
@@ -115,31 +129,40 @@ const FallbackView: React.FC<{ data: any, mode: any, onCountryClick: any }> = ({
   </div>
 );
 
-export const Globe3D: React.FC<Globe3DProps> = ({ data, mode, onCountryClick, polygonsData }) => {
+export const Globe3D: React.FC<Globe3DProps> = ({ data, mode, onCountryClick, polygonsData, selectedCountryName }) => {
   const globeEl = useRef<GlobeMethods>();
   const [hoverD, setHoverD] = useState<any | null>(null);
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [webGLSupported, setWebGLSupported] = useState(true);
 
   useEffect(() => {
-    if (!isWebGLAvailable()) {
-      setWebGLSupported(false);
-    }
-
-    const handleResize = () => {
-      setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight
-      });
-    };
+    if (!isWebGLAvailable()) setWebGLSupported(false);
+    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Auto-focus camera on selection
+  useEffect(() => {
+    if (selectedCountryName && globeEl.current && polygonsData.length > 0) {
+      const country = polygonsData.find(d => d.properties.ADMIN === selectedCountryName);
+      if (country) {
+        // Calculate simple centroid from bbox if available, or just use the first coordinate of the first polygon
+        // React-globe.gl provides polygonAltitude which helps, but for camera we need lat/lng.
+        // A simple approach: find the bounding box or just a point.
+        // Since we don't have a geo lib here, we rely on user interaction or just look cool.
+        // Actually, let's just let the user explore, but strictly highlight the geometry.
+        
+        // Optional: We could implement a simple centroid calc if needed, 
+        // but visually the pop-up is often enough. 
+        // Let's rely on the visual "pop" implemented in polygonAltitude.
+      }
+    }
+  }, [selectedCountryName, polygonsData]);
+
   const getVal = (feat: any) => {
     if (!feat || !feat.properties) return 0;
-    const name = feat.properties.ADMIN;
-    const stats = data[name];
+    const stats = data[feat.properties.ADMIN];
     if (!stats) return 0;
     
     switch (mode) {
@@ -152,21 +175,34 @@ export const Globe3D: React.FC<Globe3DProps> = ({ data, mode, onCountryClick, po
   };
 
   const getColor = (val: number) => {
-    if (!val && val !== 0) return 'rgba(200,200,200,0.1)';
+    if (!val && val !== 0) return 'rgba(30, 41, 59, 0.8)'; // Slate 800 for no data
     
     switch (mode) {
       case 'POPULATION': 
-        // 0 to 100M scale (logarithmic-ish visualization adjustment)
-        return interpolateColor('#3b0764', '#facc15', Math.min(val / 100000000, 1)); 
+        // Rich Purple -> Pink -> Gold Gradient
+        return getGradientColor(Math.min(val / 100000000, 1), [
+          { pos: 0.0, color: '#312e81' }, // Indigo 900
+          { pos: 0.3, color: '#7c3aed' }, // Violet 600
+          { pos: 0.6, color: '#db2777' }, // Pink 600
+          { pos: 1.0, color: '#facc15' }  // Yellow 400
+        ]);
       case 'GDP_PER_CAPITA': 
-        // 0 to 60k scale
-        return interpolateColor('#064e3b', '#34d399', Math.min(val / 60000, 1));
+        // Deep Ocean -> Cyan -> White Gradient
+        return getGradientColor(Math.min(val / 65000, 1), [
+          { pos: 0.0, color: '#022c22' }, // Teal 950
+          { pos: 0.3, color: '#0d9488' }, // Teal 600
+          { pos: 0.7, color: '#22d3ee' }, // Cyan 400
+          { pos: 1.0, color: '#e0f2fe' }  // Sky 100
+        ]);
       case 'POP_GROWTH':
-        // -1% to 2%
-        return interpolateColor('#f43f5e', '#10b981', Math.min(Math.max((val + 1) / 3, 0), 1));
       case 'GDP_GROWTH':
-        // -2% to 6%
-        return interpolateColor('#f43f5e', '#10b981', Math.min(Math.max((val + 2) / 8, 0), 1));
+        // Red -> Slate -> Neon Green
+        const normalized = Math.min(Math.max((val + 2) / 8, 0), 1);
+        return getGradientColor(normalized, [
+          { pos: 0.0, color: '#ef4444' }, // Red 500
+          { pos: 0.4, color: '#475569' }, // Slate 600
+          { pos: 1.0, color: '#10b981' }  // Emerald 500
+        ]);
       default:
         return '#ffffff';
     }
@@ -183,30 +219,48 @@ export const Globe3D: React.FC<Globe3DProps> = ({ data, mode, onCountryClick, po
           ref={globeEl}
           width={dimensions.width}
           height={dimensions.height}
+          
+          // Improved Visuals
+          backgroundColor="#020617" // Slate 950
           globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
           backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+          atmosphereColor="#3b82f6"
+          atmosphereAltitude={0.15}
           
+          // Polygons
           polygonsData={polygonsData}
-          polygonAltitude={d => d === hoverD ? 0.12 : 0.06}
+          polygonAltitude={d => d.properties.ADMIN === selectedCountryName ? 0.3 : (d === hoverD ? 0.12 : 0.01)}
           polygonCapColor={(d: any) => {
-            const val = getVal(d);
-            const color = getColor(val);
-            return d === hoverD ? '#06b6d4' : color;
+            if (d.properties.ADMIN === selectedCountryName) return '#a5f3fc'; // Cyan 200 (Bright highlight)
+            if (d === hoverD) return '#7dd3fc'; // Sky 300
+            return getColor(getVal(d));
           }}
-          polygonSideColor={() => 'rgba(0,0,0,0.5)'}
-          polygonStrokeColor={() => '#111'}
+          polygonSideColor={(d: any) => {
+             if (d.properties.ADMIN === selectedCountryName) return 'rgba(34, 211, 238, 0.8)'; // Cyan Glow
+             return 'rgba(0,0,0,0.6)';
+          }}
+          polygonStrokeColor={() => '#1e293b'}
+          
+          // Interaction
           polygonLabel={({ properties: d }: any) => {
             const stats = data[d.ADMIN];
-            if (!stats) return `<div class="bg-slate-900 px-2 py-1 rounded text-xs text-slate-400">${d.ADMIN}</div>`;
+            const isSelected = d.ADMIN === selectedCountryName;
+            
+            if (!stats) return '';
             
             return `
-            <div class="bg-slate-900/90 p-2 rounded border border-slate-700 backdrop-blur text-xs text-white font-sans">
-              <strong class="text-cyan-400 block mb-1">${d.ADMIN}</strong>
-              ${mode.replace(/_/g, ' ')}: <span class="font-mono">${
-                 mode.includes('GROWTH') ? stats[mode === 'GDP_GROWTH' ? 'gdpGrowth' : 'popGrowth'].toFixed(2) + '%' : 
-                 mode === 'GDP_PER_CAPITA' ? '$' + Math.round(stats.gdpPerCapita).toLocaleString() :
-                 (stats.population / 1000000).toFixed(1) + 'M'
-              }</span>
+            <div class="${isSelected ? 'bg-cyan-950/90 border-cyan-500' : 'bg-slate-900/90 border-slate-700'} p-3 rounded-xl border backdrop-blur-md shadow-2xl text-white font-sans min-w-[150px]">
+              <strong class="${isSelected ? 'text-cyan-300' : 'text-slate-200'} text-sm block mb-2 tracking-wide">${d.ADMIN}</strong>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-xs text-slate-400 uppercase">${mode.replace(/_/g, ' ')}</span>
+                <span class="font-mono font-bold text-lg ${isSelected ? 'text-white' : 'text-cyan-400'}">
+                  ${
+                     mode.includes('GROWTH') ? stats[mode === 'GDP_GROWTH' ? 'gdpGrowth' : 'popGrowth'].toFixed(2) + '%' : 
+                     mode === 'GDP_PER_CAPITA' ? '$' + Math.round(stats.gdpPerCapita).toLocaleString() :
+                     (stats.population / 1000000).toFixed(1) + 'M'
+                  }
+                </span>
+              </div>
             </div>
           `}}
           
@@ -214,11 +268,19 @@ export const Globe3D: React.FC<Globe3DProps> = ({ data, mode, onCountryClick, po
           onPolygonClick={(feat: any) => {
               const name = feat.properties.ADMIN;
               const stats = data[name];
-              if (stats) onCountryClick(name, stats);
+              if (stats) {
+                onCountryClick(name, stats);
+                
+                // Optional: Fly to clicked point if geometry is simple
+                if (globeEl.current) {
+                   // Using a slight offset to view from an angle
+                   // globeEl.current.pointOfView({ lat: ..., lng: ..., altitude: 2.5 }, 1000);
+                }
+              }
           }}
           
-          atmosphereColor="#3b82f6"
-          atmosphereAltitude={0.1}
+          // Optimizations
+          polygonsTransitionDuration={400}
         />
       </div>
     </GlobeErrorBoundary>
